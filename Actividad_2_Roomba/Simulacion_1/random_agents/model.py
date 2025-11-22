@@ -1,7 +1,8 @@
 from mesa import Model
 from mesa.discrete_space import OrthogonalMooreGrid
+from mesa.datacollection import DataCollector
 
-from .agent import RandomAgent, ObstacleAgent, DirtyAgent, ChargingStation, dirty_agents
+from .agent import RandomAgent, ObstacleAgent, DirtyAgent, ChargingStation, dirty_agents, charging_station
 
 class RandomModel(Model):
     """
@@ -22,57 +23,63 @@ class RandomModel(Model):
 
         self.grid = OrthogonalMooreGrid([width, height], torus=False)
 
-        # Limpiamos la lista global de dirty_agents al iniciar el modelo para crear los nuevos random
+        # Limpiamos las listas globales al iniciar el modelo
         dirty_agents.clear()
+        charging_station.clear()
 
-        offset_y = 25  # Ponemos estacion de carga hasta arriba
-
-        border = [(x, y + offset_y) 
-                for y in range(3)
-                for x in range(3)
-                if y in [0, 2] or x in [0, 2]]  
-
-        border2 = [(x, y + offset_y)
-                for y in range(2)
-                for x in range(2)
-                if y in [0, 1] or x in [0, 1]]  
+        # Creamos la estación de carga en (0,0)
+        charging_station_cell = None
+        agent_start_cell = None
 
         for _, cell in enumerate(self.grid):
-            if cell.coordinate == (1,1): ## Usamos ambas listas
-        # Generamos agentes de limpieza pero en la posición 1,1
-                RandomAgent.create_agents(
-                    self,
-                    self.num_agents,
-                    cell=[cell]
-                )
-                break
-        
-        
-        # Creamos la estación de carga
-        for _, cell in enumerate(self.grid):
-            if cell.coordinate in border+border2: ## Usamos ambas listas
+            if cell.coordinate == (0, 0):
                 ChargingStation(self, cell=cell)
-            
+                charging_station_cell = cell
+            elif cell.coordinate == (1, 1):
+                agent_start_cell = cell
 
-        
+        # Generamos el agente de limpieza en posición (1,1)
+        if agent_start_cell is not None:
+            agent = RandomAgent(self, cell=agent_start_cell)
+            # El agente conoce la estación de carga desde el inicio
+            if charging_station_cell is not None:
+                agent.known_charging_stations.append(charging_station_cell)
+                agent.my_charging_station = charging_station_cell
+
         ## Generamos obstaculos apartir de num of obstacles
         for i in range(self.num_obstacles):
             ObstacleAgent(self, cell=self.random.choices(self.grid.empties.cells)[0])
 
-
-
-
-        # estaciones_carga = self.random.choices(self.grid.empties.cells, k=self.num_agents)
-        # for cell in estaciones_carga:
-        #     ChargingStation(self, cell=cell)
-
         for i in range(self.dirty_cells):
             # Agregamos dirty cells
             DirtyAgent(self, cell=self.random.choices(self.grid.empties.cells)[0])
-        
-    
+
+        # Guardamos el número inicial de celdas sucias para calcular porcentaje
+        self.initial_dirty_cells = self.dirty_cells
+
+        # DataCollector para estadísticas
+        self.datacollector = DataCollector(
+            model_reporters={
+                "Dirty Cells %": lambda m: (len(dirty_agents) / m.initial_dirty_cells * 100) if m.initial_dirty_cells > 0 else 0,
+                "Avg Battery %": lambda m: self._get_avg_battery(m),
+                "Active Agents": lambda m: self._get_active_agents(m),
+            }
+        )
+
         self.running = True
+
+    def _get_avg_battery(self, model):
+        """Calcula la batería promedio de los agentes activos"""
+        agents = [a for a in model.agents if isinstance(a, RandomAgent) and not a.is_dead]
+        if len(agents) == 0:
+            return 0
+        return sum(a.battery for a in agents) / len(agents)
+
+    def _get_active_agents(self, model):
+        """Cuenta los agentes que siguen activos (no muertos)"""
+        return len([a for a in model.agents if isinstance(a, RandomAgent) and not a.is_dead])
 
     def step(self):
         '''Advance the model by one step.'''
+        self.datacollector.collect(self)
         self.agents.shuffle_do("step")

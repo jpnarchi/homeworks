@@ -5,6 +5,7 @@ from mesa.visualization import (
     Slider,
     SolaraViz,
     make_space_component,
+    make_plot_component,
 )
 
 from mesa.visualization.components import AgentPortrayalStyle
@@ -19,10 +20,16 @@ def random_portrayal(agent):
     )
 
     if isinstance(agent, RandomAgent):
-        portrayal.color = "red"
+        # Si el agente está muerto, mostrarlo en negro con una X
+        if agent.is_dead:
+            portrayal.color = "black"
+            portrayal.marker = "x"
+            portrayal.size = 80
+        else:
+            portrayal.color = "red"
     elif isinstance(agent, DirtyAgent):
         portrayal.color = "green"
-        portrayal.marker = "s"
+        portrayal.marker = "*"
         portrayal.size = 100
     elif isinstance(agent, ChargingStation):
         portrayal.color = "blue"
@@ -45,8 +52,8 @@ model_params = {
         "label": "Random Seed",
     },
     "num_agents": Slider("Number of agents", 10, 1, 50),
-    "dirty_cells": Slider("Number of dirty cells", 10, 1, 50),
-    "num_obstacles": Slider("Number of obstacles", 10, 1, 50),
+    "dirty_cells": Slider("Number of dirty cells", 10, 1, 200),
+    "num_obstacles": Slider("Number of obstacles", 10, 1, 200),
     "width": Slider("Grid width", 28, 1, 50),
     "height": Slider("Grid height", 28, 1, 50),
 }
@@ -67,9 +74,19 @@ space_component = make_space_component(
         post_process=post_process
 )
 
+def post_process_lines(ax):
+    ax.legend(loc="upper right")
+    ax.set_ylabel("Porcentaje / Cantidad")
+    ax.set_xlabel("Paso")
+
+plot_component = make_plot_component(
+    {"Dirty Cells %": "tab:red", "Avg Battery %": "tab:blue", "Active Agents": "tab:green"},
+    post_process=post_process_lines,
+)
+
 page = SolaraViz(
     model,
-    components=[space_component],
+    components=[space_component, plot_component],
     model_params=model_params,
     name="Random Model",
 )

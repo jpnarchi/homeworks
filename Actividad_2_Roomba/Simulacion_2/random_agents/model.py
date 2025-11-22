@@ -1,7 +1,8 @@
 from mesa import Model
 from mesa.discrete_space import OrthogonalMooreGrid
+from mesa.datacollection import DataCollector
 
-from .agent import RandomAgent, ObstacleAgent, DirtyAgent, ChargingStation, dirty_agents
+from .agent import RandomAgent, ObstacleAgent, DirtyAgent, ChargingStation, dirty_agents, charging_station
 
 class RandomModel(Model):
     """
@@ -22,35 +23,22 @@ class RandomModel(Model):
 
         self.grid = OrthogonalMooreGrid([width, height], torus=False)
 
-        # Limpiamos la lista global de dirty_agents al iniciar el modelo para crear los nuevos random
+        # Limpiamos las listas globales al iniciar el modelo
         dirty_agents.clear()
+        charging_station.clear()
 
-        border = [(x,y) ## Reciclamos código pero lo adaptamos para la estación de carga de abajo a la izquierda
-                  for y in range(3)
-                  for x in range(3)
-                  if y in [2, height] or x in [2, width]]
-
-        border2 = [(x,y)
-                  for y in range(2)
-                  for x in range(2)
-                  if y in [1, height] or x in [1, width]]
-
-        border.append((0,0))  # Agregamos casilla faltante de ambas listas
-        
-        
-        # Creamos la estación de carga
-        for _, cell in enumerate(self.grid):
-            if cell.coordinate in border+border2: ## Usamos ambas listas
-                ChargingStation(self, cell=cell)
-            
-
+        # Seleccionamos posiciones aleatorias para cada agente
         estaciones_carga = self.random.choices(self.grid.empties.cells, k=self.num_agents)
+
+        # Creamos una estación de carga en cada posición inicial
+        for cell in estaciones_carga:
+            ChargingStation(self, cell=cell)
+
         ## Generamos obstaculos apartir de num of obstacles
         for i in range(self.num_obstacles):
             ObstacleAgent(self, cell=self.random.choices(self.grid.empties.cells)[0])
 
-
-        # Generamos agentes de limpieza
+        # Generamos agentes de limpieza - cada uno inicia en su estación correspondiente
         RandomAgent.create_agents(
             self,
             self.num_agents,
@@ -64,10 +52,33 @@ class RandomModel(Model):
         for i in range(self.dirty_cells):
             # Agregamos dirty cells
             DirtyAgent(self, cell=self.random.choices(self.grid.empties.cells)[0])
-        
-    
+
+        # Guardamos el número inicial de celdas sucias para calcular porcentaje
+        self.initial_dirty_cells = self.dirty_cells
+
+        # DataCollector para estadísticas
+        self.datacollector = DataCollector(
+            model_reporters={
+                "Dirty Cells %": lambda m: (len(dirty_agents) / m.initial_dirty_cells * 100) if m.initial_dirty_cells > 0 else 0,
+                "Avg Battery %": lambda m: self._get_avg_battery(m),
+                "Active Agents": lambda m: self._get_active_agents(m),
+            }
+        )
+
         self.running = True
+
+    def _get_avg_battery(self, model):
+        """Calcula la batería promedio de los agentes activos"""
+        agents = [a for a in model.agents if isinstance(a, RandomAgent) and not a.is_dead]
+        if len(agents) == 0:
+            return 0
+        return sum(a.battery for a in agents) / len(agents)
+
+    def _get_active_agents(self, model):
+        """Cuenta los agentes que siguen activos (no muertos)"""
+        return len([a for a in model.agents if isinstance(a, RandomAgent) and not a.is_dead])
 
     def step(self):
         '''Advance the model by one step.'''
+        self.datacollector.collect(self)
         self.agents.shuffle_do("step")
